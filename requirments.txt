@@ -1,0 +1,7 @@
+numpy
+pandas
+matplotlib
+tensorflow
+cv2
+scikit-learn
+split-folders
