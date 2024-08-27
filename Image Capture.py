@@ -9,7 +9,7 @@ model = load_model(r".\Model\best_model.keras")
 
 camera = cv2.VideoCapture(0)
 _, frame = camera.read()
-_, frame = camera.read()
+
 filename = "capture.png"
 cv2.imwrite(f"static\{filename}", frame)
 camera.release()

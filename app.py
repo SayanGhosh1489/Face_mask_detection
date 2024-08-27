@@ -1,146 +1,89 @@
-import os
-from urllib.request import Request
-from flask import Flask, render_template, Response, request, redirect, flash
-from src.helper import *
-import urllib
-import secrets
 import cv2
+import numpy as np
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import load_model
+import os
 
+# Load the model and face detector
+model_path = r'.\Model\mask_detector.h5'
+cascade_path = r'.\template\haarcascade_frontalface_default.xml'
+video_path = "sgg.mp4"
 
-app = Flask(__name__)
+if not os.path.exists(model_path):
+    raise FileNotFoundError(f"Model file not found: {model_path}")
 
-app.config['UPLOAD_FOLDER'] = r".\Upload"
+if not os.path.exists(cascade_path):
+    raise FileNotFoundError(f"Cascade file not found: {cascade_path}")
 
+if not os.path.exists(video_path):
+    raise FileNotFoundError(f"Video file not found: {video_path}")
 
-@app.route('/')
-def index():
-    """my main page"""
-    return render_template('index.html')
+model = load_model(model_path)
+face_cascade = cv2.CascadeClassifier(cascade_path)
 
+# Open the video file
+image = cv2.VideoCapture(video_path)
 
-@app.route('/ImageStream')
-def ImageStream():
-    """the live page"""
-    return render_template('RealtimeImage.html')
+if not image.isOpened():
+    raise ValueError("Error opening video stream or file")
 
+while True:
+    ret, frame = image.read()
+    if not ret:
+        break
 
-@app.route('/video_feed')
-def video_feed():
-    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    # Resize frame for processing
+    frame = cv2.resize(frame, (500, 500), interpolation=cv2.INTER_AREA)
 
+    # Detect faces in the frame
+    faces = face_cascade.detectMultiScale(frame, 1.2, 7, minSize=(60, 60), flags=cv2.CASCADE_SCALE_IMAGE)
 
-@app.route('/takeimage', methods=['POST'])
-def takeimage():
-    """ Captures Images from WebCam, saves them and check face mask detection analysis """
+    IDs = []
 
-    _, frame = camera.read()
-    filename = "capture.png"
-    cv2.imwrite(f"static\{filename}", frame)
-    camera.release()
+    for (x, y, w, h) in faces:
+        face = frame[y:y + h, x:x + w]
+        cropped_face = face.copy()
+        face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+        face = cv2.resize(face, (224, 224))
+        face = img_to_array(face)
+        face = np.expand_dims(face, axis=0)
+        face = preprocess_input(face)
 
-    results = image_preprocessing(filename)
-    if results is None:
-        return render_template('Error.html')
-    else:
+        pred = model.predict(face)[0]
+        WithoutMask, CorrectMask, InCorrectMask = pred
 
-        img_preds = results[0]
-        frame = results[1]
-        faces_detected = results[2]
-
-        results2 = predictions_results(img_preds, frame, faces_detected, filename)
-        full_filename = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
-        return render_template('PictureResult.html', user_image=full_filename,
-                               number_of_face="Number of faces detected: {}".format(results2[0]),
-                               no_mask_face="No face mask count: {}".format(results2[1]),
-                               correct_mask_face="Correct face mask count: {}".format(results2[2]),
-                               incorrect_mask_face="Incorrect face mask count: {}".format(results2[3]))
-
-
-@app.route('/UploadImage', methods=['POST'])
-def UploadImage():
-    """the upload image page"""
-    return render_template('UploadPicture.html')
-
-
-@app.route('/UploadImageFunction', methods=['POST'])
-def UploadImageFunction():
-    if request.method == 'POST':
-
-        # Check if the post request has the file part
-        if 'file' not in request.files:
-            flash('No file part')
-            return redirect(request.url)
-
-        file = request.files['file']
-
-        # If user does not select file, browser also
-        # submit an empty part without filename
-        if file.filename == '':
-            flash('No selected file')
-            return redirect(request.url)
-
-        # If user uploads the correct Image File
-        if file and allowed_file(file.filename):
-
-            # Pass it a filename and it will return a secure version of it.
-            # The filename returned is an ASCII only string for maximum portability.
-            filename = secure_filename(file.filename)
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-
-            results = image_preprocessing(filename)
-            if results is None:
-                return render_template('Error.html')
-            else:
-
-                img_preds = results[0]
-                frame = results[1]
-                faces_detected = results[2]
-
-                results2 = predictions_results(img_preds, frame, faces_detected, filename)
-                full_filename = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
-                return render_template('UploadPicture.html', user_image=full_filename,
-                                       number_of_face="Number of faces detected: {}".format(results2[0]),
-                                       no_mask_face="No face mask count: {}".format(results2[1]),
-                                       correct_mask_face="Correct face mask count: {}".format(results2[2]),
-                                       incorrect_mask_face="Incorrect face mask count: {}".format(results2[3]))
-
-
-@app.route('/UploadURLImage', methods=['POST'])
-def UploadURLImage():
-    """the upload an image URL page"""
-    return render_template('UploadURLImage.html')
-
-
-@app.route('/ImageUrl', methods=['POST'])
-def ImageUrl():
-    """the upload an image URL page"""
-
-    # Fetch the Image from the Provided URL
-    url = request.form['url']
-    filename = url.split('/')[-1]
-    if allowed_file(filename):
-        urllib.request.urlretrieve(url, f"static/{filename}")
-
-        results = image_preprocessing(filename)
-        if results is None:
-            return render_template('Error.html')
+        # Determine the label and color for the bounding box and text
+        if max(pred) == CorrectMask:
+            label = "Correct Mask"
+            color = (0, 255, 0)
+            IDs.append(1)
+        elif max(pred) == InCorrectMask:
+            label = "Incorrect Mask"
+            color = (0, 0, 255)
+            IDs.append(2)
         else:
+            label = "No Mask"
+            color = (0, 0, 255)
+            IDs.append(0)
 
-            img_preds = results[0]
-            frame = results[1]
-            faces_detected = results[2]
+        # Display the label with confidence score
+        label_text = "{}: {:.2f}%".format(label, max(WithoutMask, CorrectMask, InCorrectMask) * 100)
+        cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(frame, label_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
 
-            results2 = predictions_results(img_preds, frame, faces_detected, filename)
-            full_filename = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    # Display counts on the frame
+    correct_mask_count = IDs.count(1)
+    no_mask_count = IDs.count(0)
+    incorrect_mask_count = IDs.count(2)
+    face_count = correct_mask_count + no_mask_count + incorrect_mask_count
+    text = f"Faces: {face_count} | No Mask: {no_mask_count} | Correct: {correct_mask_count} | Incorrect: {incorrect_mask_count}"
+    cv2.putText(frame, text, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
-            return render_template('UploadURLImage.html', user_image=full_filename,
-                                   number_of_face="Number of faces detected: {}".format(results2[0]),
-                                   no_mask_face="No face mask count: {}".format(results2[1]),
-                                   correct_mask_face="Correct face mask count: {}".format(results2[2]),
-                                   incorrect_mask_face="Incorrect face mask count: {}".format(results2[3]))
+    # Show the frame
+    cv2.imshow("Output", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
-
-if __name__ == '__main__':
-    app.run(debug=True)
+image.release()
+cv2.destroyAllWindows()
