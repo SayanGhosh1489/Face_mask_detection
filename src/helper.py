@@ -1,8 +1,11 @@
-import numpy as np
+import os
+from tensorflow import keras
+from keras.models import load_model
 import cv2
-from tensorflow.keras.preprocessing.image import img_to_array
-from tensorflow.keras.applications.vgg16 import preprocess_input
-from tensorflow.keras.models import load_model
+import numpy as np
+import matplotlib.pyplot as plt
+from keras.preprocessing.image import img_to_array
+from keras.applications.vgg16 import preprocess_input
 
 
 #model loading
@@ -12,21 +15,21 @@ model = load_model(r'.\Model\best_model.keras')
 classes = ['without_mask', 'mask_weared_incorrect', 'with_mask']
 
 # Loading the face detector
-face_cascade = cv2.CascadeClassifier(r'.\templates\haarcascade_frontalface_default.xml')
+face_classifier = cv2.CascadeClassifier(r".\templates\haarcascade_frontalface_default.xml")
 
-# accepted image file extension
-UPLOAD_FOLDER = 'static/'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
 # initiating the video capturing
 camera = cv2.VideoCapture(0)
 
+# Labels for different outcomes
+text_mask = "Mask On"
+text_no_mask = "Mask Off"
+text_wrong_mask = "Incorrect Mask"
 
-def allowed_file(filename):
-    """ Checks the file format when file is uploaded"""
-
-    return ('.' in filename and
-            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS)
+# Font settings
+font = cv2.FONT_HERSHEY_SIMPLEX
+scale = 0.8
 
 
 def gen_frames():
@@ -39,66 +42,89 @@ def gen_frames():
             frame = buffer.tobytes()
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-            
-def image_preprocessing(frame):
-    path = "static/" + str(frame)
-    frame = cv2.imread(path)
-    faces_detected = face_cascade.detectMultiScale(frame, 1.2, 7, minSize=(60, 60), flags=cv2.CASCADE_SCALE_IMAGE)
 
-    if len(faces_detected) == 0:
-        print("face not detected")
-
-
-    else:
-        faces_images = []
-        for (x, y, w, h) in faces_detected:
-            cropped_faces = frame[y:y + h, x:x + w]
-            cropped_faces = cv2.cvtColor(cropped_faces, cv2.COLOR_BGR2RGB)
-            cropped_faces = cv2.resize(cropped_faces, (224, 224))
-            cropped_faces = img_to_array(cropped_faces)
-            faces_images.append(cropped_faces)
-
-        faces_images = np.array(faces_images)
-        faces = preprocess_input(faces_images)
-        predictions = model.predict(faces)
-        return predictions, frame, faces_detected
+def fileNameGenerator(path, filename):
+    # Convert all filenames in the directory to lowercase
+    fileList = [file.lower() for file in os.listdir(path)]
     
-def predictions_results(predictions, frame, faces_detected, filename):
-    correct_mask_count = []
-    incorrect_mask_count = []
-    no_mask_count = []
+    # Initialize the base name and extension
+    base_name = filename.split('_')[0]
+    ext = filename.split('.')[1]
+    
+    # Check if the filename already exists in the fileList
+    if filename.lower() in fileList:
+        # Extract and increment the digit part
+        digit = int(filename.split('_')[1].split('.')[0])
+        digit += 1
+    else:
+        # If filename does not exist, start with _0
+        digit = 0
 
-    i = 0
-    for pred in predictions:
+# Generate a new filename with the incremented digit
+    new_filename = f"{base_name}_{digit}.{ext}"
+    
+    # If the new filename still exists in the fileList, keep incrementing
+    while new_filename.lower() in fileList:
+        digit += 1
+        new_filename = f"{base_name}_{digit}.{ext}"
+    
+    return new_filename
 
-        (WithoutMask, InCorrectMask, CorrectMask) = pred
-        if max(pred) == CorrectMask:
-            label = " Correct Mask"
-            color = (0, 255, 0)
-            correct_mask_count.append(1)
-        elif max(pred) == InCorrectMask:
-            label = " Incorrect Mask"
-            color = (250, 00, 0)
-            incorrect_mask_count.append(2)
+
+def allowed_file(filename):
+    """ Checks the file format when file is uploaded"""
+
+    return ('.' in filename and
+            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS)
+
+
+def imagePreprocessing(image):
+    face_frame = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    face_frame = cv2.resize(face_frame, (224, 224))
+    face_frame = img_to_array(face_frame)
+    face_frame = np.expand_dims(face_frame, axis=0)
+    face_frame = preprocess_input(face_frame)
+
+    return face_frame
+
+def predict(image):
+    face_frame = imagePreprocessing(image)
+    prediction = model.predict(face_frame)
+    boost_factor = 1.1  # Define a boost factor for incorrect mask
+    prediction[0][1] *= boost_factor  # 'mask_weared_incorrect' is the second class
+    prediction[0] /= np.sum(prediction[0])  # Normalize to maintain valid probabilities
+    
+    predicted_class = np.argmax(prediction)
+    return predicted_class, prediction[0]
+
+def detector(gray_image, frame):
+    faces = face_classifier.detectMultiScale(gray_image, 1.1, 5)
+    
+    for (x, y, w, h) in faces:
+        roi_color = frame[y:y+h, x:x+w]
+        mask, probabilities = predict(roi_color)
+        # Prediction classes
+        classes = ['without_mask', 'mask_weared_incorrect', 'with_mask']
+        result = classes[mask]
+        probability = round(probabilities[mask] * 100, 0)
+
+        if result == "without_mask":
+            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+            cv2.putText(frame, f"{text_no_mask}: {probability:.0f}%", org=(x+5, y-10), fontFace=font, fontScale=scale, color=(0, 0, 255), thickness=2)
+        
+        elif result == "mask_weared_incorrect":
+            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 255, 0), 2)
+            cv2.putText(frame, f"{text_wrong_mask}: {probability:.0f}%", org=(x+5, y-10), fontFace=font, fontScale=scale, color=(0, 0, 255), thickness=2)
+        
         else:
-            label = " No Mask"
-            color = (0, 0, 255)
-            no_mask_count.append(0)
-
-        # include the probability in the label
-        label = "{}: {:.2f}%".format(label, max(WithoutMask, CorrectMask, InCorrectMask) * 100)
-        (x, y, w, h) = faces_detected[i]
-        # Displaying the labels
-        cv2.rectangle(frame, (x, y + 20), (x + 5 + w, y + h + 15), color, 2)
-        cv2.putText(frame, label, (x, y + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-        i += 1
-
-    cv2.imwrite(f"static\{filename}", frame)
-    face_count = len(no_mask_count) + len(incorrect_mask_count) + len(correct_mask_count)
-    no_masks = len(no_mask_count)
-    corrects_masks = len(correct_mask_count)
-    incorrects_masks = len(incorrect_mask_count)
-
-    return face_count, no_masks, corrects_masks, incorrects_masks
+            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.putText(frame, f"{text_mask}: {probability:.0f}%", org=(x+5, y-10), fontFace=font, fontScale=scale, color=(0, 255, 0), thickness=2)
             
+    return frame
+
+
+
+
+
+
 

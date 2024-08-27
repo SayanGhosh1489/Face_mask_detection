@@ -11,12 +11,14 @@ list_of_files = [
     '.env',
     'app.py',
     'setup.py',
-    'static/.gitkeep',
+    'static/Upload/.gitkeep',
     'templates/.app.html',
     'Model/trials.ipynb',
     'Notebook/trails.ipynp',
     'Data/text.txt',
-    'Output/text.txt'
+    'Output/text.txt',
+    'Capture/.gitkeep',
+    'Data/text.txt'
 ]
 
 for filepath in list_of_files:
