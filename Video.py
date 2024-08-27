@@ -21,7 +21,7 @@ text_wrong_mask = "Incorrect Mask"
 font = cv2.FONT_HERSHEY_SIMPLEX
 scale = 0.8
 
-# Function to predict mask status
+# Function to predict mask status and return probabilities
 def predict(image):
     face_frame = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     face_frame = cv2.resize(face_frame, (224, 224))
@@ -29,9 +29,14 @@ def predict(image):
     face_frame = np.expand_dims(face_frame, axis=0)
     face_frame = preprocess_input(face_frame)
     prediction = mask_detection.predict(face_frame)
-    predicted_class = np.argmax(prediction)
+    boost_factor = 1.1  # Define a boost factor for incorrect mask
+    prediction[0][1] *= boost_factor  # 'mask_weared_incorrect' is the second class
+    prediction[0] /= np.sum(prediction[0])  # Normalize to maintain valid probabilities
     
-    return predicted_class
+    predicted_class = np.argmax(prediction)
+    return predicted_class, prediction[0]
+    predicted_class = np.argmax(prediction)
+    return predicted_class, prediction[0]
 
 # Function to detect faces and predict mask status
 def detector(gray_image, frame):
@@ -39,22 +44,23 @@ def detector(gray_image, frame):
     
     for (x, y, w, h) in faces:
         roi_color = frame[y:y+h, x:x+w]
-        mask = predict(roi_color)
+        mask, probabilities = predict(roi_color)
         # Prediction classes
         classes = ['without_mask', 'mask_weared_incorrect', 'with_mask']
         result = classes[mask]
+        probability = round(probabilities[mask] * 100,0)
 
         if result == "without_mask":
             cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-            cv2.putText(frame, text=text_no_mask, org=(x+50, y-10), fontFace=font, fontScale=scale, color=(0, 0, 255), thickness=2)
+            cv2.putText(frame, f"{text_no_mask}: {probability:.2f}%", org=(x+5, y-10), fontFace=font, fontScale=scale, color=(0, 0, 255), thickness=2)
         
         elif result == "mask_weared_incorrect":
             cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 255, 0), 2)
-            cv2.putText(frame, text=text_wrong_mask, org=(x+50, y-10), fontFace=font, fontScale=scale, color=(0, 0, 255), thickness=2)
+            cv2.putText(frame, f"{text_wrong_mask}: {probability:.2f}%", org=(x+5, y-10), fontFace=font, fontScale=scale, color=(0, 0, 255), thickness=2)
         
         else:
             cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(frame, text=text_mask, org=(x+50, y-10), fontFace=font, fontScale=scale, color=(0, 255, 0), thickness=2)
+            cv2.putText(frame, f"{text_mask}: {probability:.2f}%", org=(x+5, y-10), fontFace=font, fontScale=scale, color=(0, 255, 0), thickness=2)
             
     return frame
 

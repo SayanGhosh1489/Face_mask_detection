@@ -15,3 +15,8 @@ conda activate facedetect_tf
 ```
 pip install -r requirements.txt
 ```
+
+## To run the Video.py from bash UTF-8 to be activated
+```
+export PYTHONIOENCODING=UTF-8
+```
